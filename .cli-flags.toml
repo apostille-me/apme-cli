@@ -1,0 +1,35 @@
+[help]
+url = "https://github.com/apostille-me/apme-cli"
+
+[env]
+ignore = ["APME_API_TOKEN"]
+
+[flags.api_url]
+type = "string"
+env = "APME_API_URL"
+default = "http://127.0.0.1:8080"
+aliases = ["api-url"]
+help = "Base URL for the Apostille Me API."
+
+[flags.timeout_seconds]
+type = "integer"
+env = "APME_TIMEOUT_SECONDS"
+default = 20
+aliases = ["timeout-seconds"]
+help = "HTTP timeout in seconds."
+
+[flags.output]
+type = "string"
+env = "APME_OUTPUT"
+default = "json"
+aliases = ["output"]
+help = "Output mode: json or text."
+
+[commands.health]
+description = "Check API health"
+
+[commands.list]
+description = "List cases"
+
+[commands.watch]
+description = "Watch WebSocket events"
