@@ -33,6 +33,6 @@ jobs:
     with:
       language: rust
       working-directory: .
-      rust-toolchain: '1.82.0'
+      rust-toolchain: '1.85.0'
       cargo-locked: true
       run-smoke: true
