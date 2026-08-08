@@ -121,7 +121,7 @@ async fn watch(api_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{HELP, VERSION, informational_output};
+    use super::{informational_output, HELP, VERSION};
 
     #[test]
     fn help_and_version_are_available_without_network_or_configuration() {
