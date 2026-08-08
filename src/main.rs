@@ -4,6 +4,24 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use tokio_tungstenite::connect_async;
 
+const HELP: &str = "apme-cli 0.1.0\n\nUsage: apme-cli [--api-url URL] <command>\n\nCommands:\n  health  Check the Apostille Me API\n  list    List cases\n  watch   Stream case events\n\nOptions:\n  -h, --help       Print this help\n  -V, --version    Print the CLI version\n\nConfiguration flags are defined in .cli-flags.toml.\n";
+const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"), "\n");
+
+fn informational_output<I, S>(arguments: I) -> Option<&'static str>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    arguments
+        .into_iter()
+        .map(|argument| argument.as_ref().to_owned())
+        .find_map(|argument| match argument.as_str() {
+            "-h" | "--help" => Some(HELP),
+            "-V" | "--version" => Some(VERSION),
+            _ => None,
+        })
+}
+
 #[derive(Debug, Deserialize)]
 struct Config {
     #[serde(rename = "APME_API_URL")]
@@ -16,6 +34,11 @@ struct Config {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(output) = informational_output(std::env::args().skip(1)) {
+        print!("{output}");
+        return Ok(());
+    }
+
     let parser = BundledFlags2Env::new();
     parser.audit_config(Some(".cli-flags.toml"))?;
     let argv = std::env::args().collect::<Vec<_>>();
@@ -94,4 +117,17 @@ async fn watch(api_url: &str) -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", message?.into_text()?);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HELP, VERSION, informational_output};
+
+    #[test]
+    fn help_and_version_are_available_without_network_or_configuration() {
+        assert_eq!(informational_output(["--help"]), Some(HELP));
+        assert_eq!(informational_output(["-h"]), Some(HELP));
+        assert_eq!(informational_output(["--version"]), Some(VERSION));
+        assert_eq!(informational_output(["health"]), None);
+    }
 }
