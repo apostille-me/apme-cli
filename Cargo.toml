@@ -2,7 +2,7 @@
 name = "apme-cli"
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 license = "MIT"
 description = "flags-2-env operator CLI for Apostille Me health, listing, and WebSocket event watching."
 repository = "https://github.com/apostille-me/apme-cli"
