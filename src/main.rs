@@ -21,7 +21,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let argv = std::env::args().collect::<Vec<_>>();
     let parsed = parser.parse_structured(&argv, Some(".cli-flags.toml"))?;
     if !parsed.unknown_options.is_empty() || !parsed.errors.is_empty() {
-        return Err(format!("invalid arguments: unknown={:?} errors={:?}", parsed.unknown_options, parsed.errors).into());
+        return Err(format!(
+            "invalid arguments: unknown={:?} errors={:?}",
+            parsed.unknown_options, parsed.errors
+        )
+        .into());
     }
     let mut values: HashMap<String, String> = std::env::vars().collect();
     values.extend(parsed.provided_flags);
@@ -30,8 +34,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .timeout(std::time::Duration::from_secs(config.timeout_seconds))
         .build()?;
     match parsed.command.as_str() {
-        "health" => print_response(client.get(format!("{}/healthz", config.api_url.trim_end_matches('/'))).send().await?, &config.output).await?,
-        "list" => print_response(client.get(format!("{}/api/v1/cases", config.api_url.trim_end_matches('/'))).send().await?, &config.output).await?,
+        "health" => {
+            print_response(
+                client
+                    .get(format!("{}/healthz", config.api_url.trim_end_matches('/')))
+                    .send()
+                    .await?,
+                &config.output,
+            )
+            .await?
+        }
+        "list" => {
+            print_response(
+                client
+                    .get(format!(
+                        "{}/api/v1/cases",
+                        config.api_url.trim_end_matches('/')
+                    ))
+                    .send()
+                    .await?,
+                &config.output,
+            )
+            .await?
+        }
         "watch" => watch(&config.api_url).await?,
         _ => {
             eprintln!("usage: apme-cli [--api-url URL] <health|list|watch>");
@@ -41,21 +66,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn print_response(response: reqwest::Response, output: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn print_response(
+    response: reqwest::Response,
+    output: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let status = response.status();
     let text = response.text().await?;
-    if !status.is_success() { return Err(format!("HTTP {status}: {text}").into()); }
+    if !status.is_success() {
+        return Err(format!("HTTP {status}: {text}").into());
+    }
     if output == "json" {
         let value: serde_json::Value = serde_json::from_str(&text)?;
         println!("{}", serde_json::to_string_pretty(&value)?);
-    } else { println!("{text}"); }
+    } else {
+        println!("{text}");
+    }
     Ok(())
 }
 
 async fn watch(api_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let ws_url = api_url.replacen("http://", "ws://", 1).replacen("https://", "wss://", 1);
+    let ws_url = api_url
+        .replacen("http://", "ws://", 1)
+        .replacen("https://", "wss://", 1);
     let (socket, _) = connect_async(format!("{}/ws", ws_url.trim_end_matches('/'))).await?;
     let (_, mut incoming) = socket.split();
-    while let Some(message) = incoming.next().await { println!("{}", message?.into_text()?); }
+    while let Some(message) = incoming.next().await {
+        println!("{}", message?.into_text()?);
+    }
     Ok(())
 }
