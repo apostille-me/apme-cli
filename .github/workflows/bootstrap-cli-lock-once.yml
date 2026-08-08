@@ -37,7 +37,7 @@ jobs:
       - name: Install the declared minimum Rust toolchain
         uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
         with:
-          toolchain: '1.85.0'
+          toolchain: '1.86.0'
           components: rustfmt, clippy
 
       - name: Generate and validate the committed lockfile
