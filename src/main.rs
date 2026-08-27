@@ -1,8 +1,10 @@
+use anyhow::bail;
 use flags2env::BundledFlags2Env;
 use futures_util::StreamExt;
-use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use tokio_tungstenite::connect_async;
+
+type EnvMap = BTreeMap<String, String>;
 
 const HELP: &str = "apme-cli 0.1.0\n\nUsage: apme-cli [--api-url URL] <command>\n\nCommands:\n  health  Check the Apostille Me API\n  list    List cases\n  watch   Stream case events\n\nOptions:\n  -h, --help       Print this help\n  -V, --version    Print the CLI version\n\nConfiguration flags are defined in .cli-flags.toml.\n";
 const VERSION: &str = concat!(env!("CARGO_PKG_NAME"), " ", env!("CARGO_PKG_VERSION"), "\n");
@@ -22,81 +24,89 @@ where
         })
 }
 
-#[derive(Debug, Deserialize)]
-struct Config {
-    #[serde(rename = "APME_API_URL")]
-    api_url: String,
-    #[serde(rename = "APME_TIMEOUT_SECONDS")]
-    timeout_seconds: u64,
-    #[serde(rename = "APME_OUTPUT")]
-    output: String,
+fn merge_env(mut initial: EnvMap, overrides: impl IntoIterator<Item = (String, String)>) -> EnvMap {
+    initial.extend(overrides);
+    initial
+}
+
+fn env_value<'a>(env: &'a EnvMap, key: &str) -> Option<&'a str> {
+    env.get(key)
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn apply_flags(argv: &[String], initial: EnvMap) -> anyhow::Result<(String, EnvMap)> {
+    let parser = BundledFlags2Env::new();
+    parser
+        .audit_config(Some(".cli-flags.toml"))
+        .map_err(|error| anyhow::anyhow!("invalid .cli-flags.toml: {error}"))?;
+    let parsed = parser
+        .parse_structured(argv, Some(".cli-flags.toml"))
+        .map_err(|error| anyhow::anyhow!("could not parse CLI arguments: {error}"))?;
+    if !parsed.unknown_options.is_empty() || !parsed.errors.is_empty() {
+        bail!(
+            "invalid CLI arguments: unknown={:?}, errors={:?}",
+            parsed.unknown_options,
+            parsed.errors
+        );
+    }
+    let command = parsed.command.clone();
+    Ok((command, merge_env(initial, parsed.provided_flags)))
+}
+
+fn env_or(env: &EnvMap, key: &str, default: &str) -> String {
+    env_value(env, key)
+        .map(str::to_owned)
+        .unwrap_or_else(|| default.to_string())
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(output) = informational_output(std::env::args().skip(1)) {
+async fn main() -> anyhow::Result<()> {
+    let argv = std::env::args().collect::<Vec<_>>();
+    if let Some(output) = informational_output(argv.iter().skip(1)) {
         print!("{output}");
         return Ok(());
     }
 
-    let parser = BundledFlags2Env::new();
-    parser.audit_config(Some(".cli-flags.toml"))?;
-    let argv = std::env::args().collect::<Vec<_>>();
-    let parsed = parser.parse_structured(&argv, Some(".cli-flags.toml"))?;
-    if !parsed.unknown_options.is_empty() || !parsed.errors.is_empty() {
-        return Err(format!(
-            "invalid arguments: unknown={:?} errors={:?}",
-            parsed.unknown_options, parsed.errors
-        )
-        .into());
-    }
-    let mut values: HashMap<String, String> = std::env::vars().collect();
-    values.extend(parsed.provided_flags);
-    let config: Config = parser.coerce(&values, Some(".cli-flags.toml"))?;
+    let initial = std::env::vars().collect::<EnvMap>();
+    let (command, env) = apply_flags(&argv, initial)?;
+    let api_url = env_or(&env, "APME_API_URL", "http://127.0.0.1:8080");
+    let timeout = env
+        .get("APME_TIMEOUT_SECONDS")
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(20);
+    let output = env_or(&env, "APME_OUTPUT", "json");
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+        .timeout(std::time::Duration::from_secs(timeout))
         .build()?;
-    match parsed.command.as_str() {
+    let api_url = api_url.trim_end_matches('/');
+
+    match command.as_str() {
         "health" => {
             print_response(
-                client
-                    .get(format!("{}/healthz", config.api_url.trim_end_matches('/')))
-                    .send()
-                    .await?,
-                &config.output,
+                client.get(format!("{api_url}/healthz")).send().await?,
+                &output,
             )
-            .await?
+            .await
         }
         "list" => {
             print_response(
-                client
-                    .get(format!(
-                        "{}/api/v1/cases",
-                        config.api_url.trim_end_matches('/')
-                    ))
-                    .send()
-                    .await?,
-                &config.output,
+                client.get(format!("{api_url}/api/v1/cases")).send().await?,
+                &output,
             )
-            .await?
+            .await
         }
-        "watch" => watch(&config.api_url).await?,
-        _ => {
-            eprintln!("usage: apme-cli [--api-url URL] <health|list|watch>");
-            std::process::exit(2);
-        }
+        "watch" => watch(api_url).await,
+        _ => bail!("choose one command: health, list, watch"),
     }
-    Ok(())
 }
 
-async fn print_response(
-    response: reqwest::Response,
-    output: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn print_response(response: reqwest::Response, output: &str) -> anyhow::Result<()> {
     let status = response.status();
     let text = response.text().await?;
     if !status.is_success() {
-        return Err(format!("HTTP {status}: {text}").into());
+        bail!("HTTP {status}: {text}");
     }
     if output == "json" {
         let value: serde_json::Value = serde_json::from_str(&text)?;
@@ -107,7 +117,7 @@ async fn print_response(
     Ok(())
 }
 
-async fn watch(api_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+async fn watch(api_url: &str) -> anyhow::Result<()> {
     let ws_url = api_url
         .replacen("http://", "ws://", 1)
         .replacen("https://", "wss://", 1);
@@ -121,7 +131,7 @@ async fn watch(api_url: &str) -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{informational_output, HELP, VERSION};
+    use super::*;
 
     #[test]
     fn help_and_version_are_available_without_network_or_configuration() {
@@ -129,5 +139,63 @@ mod tests {
         assert_eq!(informational_output(["-h"]), Some(HELP));
         assert_eq!(informational_output(["--version"]), Some(VERSION));
         assert_eq!(informational_output(["health"]), None);
+    }
+
+    #[test]
+    fn cli_overrides_win_without_mutating_process_environment() {
+        let before = std::env::var_os("APME_OUTPUT");
+        let env = merge_env(
+            EnvMap::from([("APME_OUTPUT".into(), "text".into())]),
+            [("APME_OUTPUT".into(), "json".into())],
+        );
+        assert_eq!(env.get("APME_OUTPUT").map(String::as_str), Some("json"));
+        assert_eq!(env_or(&env, "APME_OUTPUT", "text"), "json");
+        assert_eq!(std::env::var_os("APME_OUTPUT"), before);
+    }
+
+    #[test]
+    fn empty_and_whitespace_env_values_are_absent() {
+        for raw in ["", " ", "\t"] {
+            let env = EnvMap::from([("APME_OUTPUT".into(), raw.into())]);
+            assert_eq!(env_value(&env, "APME_OUTPUT"), None, "raw={raw:?}");
+            assert_eq!(env_or(&env, "APME_OUTPUT", "json"), "json");
+        }
+    }
+
+    #[test]
+    fn apply_flags_merges_cli_over_base_env_without_mutation() {
+        let before = std::env::var_os("APME_OUTPUT");
+        let initial = EnvMap::from([("APME_OUTPUT".into(), "text".into())]);
+        let argv = vec![
+            "apme-cli".into(),
+            "health".into(),
+            "--output".into(),
+            "json".into(),
+        ];
+        let (command, env) = apply_flags(&argv, initial).unwrap();
+        assert_eq!(command, "health");
+        assert_eq!(env.get("APME_OUTPUT").map(String::as_str), Some("json"));
+        assert_eq!(std::env::var_os("APME_OUTPUT"), before);
+    }
+
+    #[test]
+    fn apply_flags_parse_failure_does_not_mutate_process_environment() {
+        let before = std::env::var_os("APME_OUTPUT");
+        let initial = EnvMap::from([("APME_OUTPUT".into(), "text".into())]);
+        let argv = vec![
+            "apme-cli".into(),
+            "health".into(),
+            "--this-flag-is-not-declared".into(),
+        ];
+        assert!(apply_flags(&argv, initial).is_err());
+        assert_eq!(std::env::var_os("APME_OUTPUT"), before);
+    }
+
+    #[test]
+    fn source_does_not_mutate_process_environment() {
+        const SRC: &str = include_str!("main.rs");
+        let production = SRC.split("#[cfg(test)]").next().unwrap_or(SRC);
+        assert!(!production.contains("std::env::set_var"));
+        assert!(!production.contains("env::set_var"));
     }
 }
