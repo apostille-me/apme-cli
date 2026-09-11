@@ -9,7 +9,7 @@ repository = "https://github.com/apostille-me/apme-cli"
 publish = false
 
 [dependencies]
-flags2env = { git = "https://github.com/ORESoftware/flags-2-env", rev = "b596f2d1c99bd726b262a923916e3015bc80bc37", package = "flags2env" }
+flags2env = { git = "https://github.com/flags-2-env/flags-2-env.git", rev = "b596f2d1c99bd726b262a923916e3015bc80bc37", package = "flags2env" }
 futures-util = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
 serde = { version = "1", features = ["derive"] }

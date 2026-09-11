@@ -1,4 +1,7 @@
 /target
+.zed/
+.zed-pack/
+.vendor/.zed/
 .env
 .env.*
 !.env.example
