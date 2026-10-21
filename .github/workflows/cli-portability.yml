@@ -1,5 +1,4 @@
 name: CLI portability
-
 on:
   pull_request:
     paths:
@@ -29,10 +28,49 @@ concurrency:
 
 jobs:
   portability:
-    uses: ORESoftware/.github/.github/workflows/reusable-cli-portability.yml@a44a422bd2e5a26126488c4dbffb17ed320ae957
-    with:
-      language: rust
-      working-directory: .
-      rust-toolchain: '1.86.0'
-      cargo-locked: true
-      run-smoke: true
+    name: rust CLI on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2025]
+    steps:
+      - name: Checkout exact caller HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Verify checkout provenance
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30 # stable
+        with:
+          toolchain: '1.86.0'
+          components: rustfmt, clippy
+      - name: Require committed Cargo.lock
+        shell: bash
+        run: test -f Cargo.lock
+      - name: Verify formatting
+        run: cargo fmt --all -- --check
+      - name: Lint locked targets
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: Test locked targets
+        run: cargo test --locked --all-targets
+      - name: Build locked release CLI
+        run: cargo build --locked --release --bins
+      - name: Smoke CLI help
+        run: cargo run --locked --release -- --help
+      - name: Verify tracked checkout unchanged
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain=v1 --untracked-files=no)"
