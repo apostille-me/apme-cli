@@ -102,12 +102,16 @@ async fn main() -> anyhow::Result<()> {
     }
 }
 
-async fn print_response(response: reqwest::Response, output: &str) -> anyhow::Result<()> {
-    let status = response.status();
-    let text = response.text().await?;
+fn enforce_http_status(status: reqwest::StatusCode) -> anyhow::Result<()> {
     if !status.is_success() {
-        bail!("HTTP {status}: {text}");
+        bail!("HTTP {status}: upstream request failed");
     }
+    Ok(())
+}
+
+async fn print_response(response: reqwest::Response, output: &str) -> anyhow::Result<()> {
+    enforce_http_status(response.status())?;
+    let text = response.text().await?;
     if output == "json" {
         let value: serde_json::Value = serde_json::from_str(&text)?;
         println!("{}", serde_json::to_string_pretty(&value)?);
@@ -189,6 +193,21 @@ mod tests {
         ];
         assert!(apply_flags(&argv, initial).is_err());
         assert_eq!(std::env::var_os("APME_OUTPUT"), before);
+    }
+
+    #[test]
+    fn upstream_errors_do_not_echo_response_body() {
+        assert!(enforce_http_status(reqwest::StatusCode::OK).is_ok());
+        for code in [
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            let error = enforce_http_status(code).expect_err("HTTP failure");
+            let message = error.to_string();
+            assert!(message.contains(&code.to_string()));
+            assert!(message.contains("upstream request failed"));
+            assert!(!message.contains("tenant"));
+        }
     }
 
     #[test]
