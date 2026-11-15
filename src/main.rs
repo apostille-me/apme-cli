@@ -198,7 +198,10 @@ mod tests {
     #[test]
     fn upstream_errors_do_not_echo_response_body() {
         assert!(enforce_http_status(reqwest::StatusCode::OK).is_ok());
-        for code in [reqwest::StatusCode::UNAUTHORIZED, reqwest::StatusCode::INTERNAL_SERVER_ERROR] {
+        for code in [
+            reqwest::StatusCode::UNAUTHORIZED,
+            reqwest::StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
             let error = enforce_http_status(code).expect_err("HTTP failure");
             let message = error.to_string();
             assert!(message.contains(&code.to_string()));
